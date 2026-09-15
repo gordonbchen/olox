@@ -99,8 +99,8 @@ let rec scan_one chars = match chars with
 
         | '!' -> match_next cs '=' TBangEqual TBang
         | '=' -> match_next cs '=' TEqualEqual TEqual
-        | '<' -> match_next cs '=' TLess TLessEqual
-        | '>' -> match_next cs '=' TGreater TGreaterEqual
+        | '<' -> match_next cs '=' TLessEqual TLess
+        | '>' -> match_next cs '=' TGreaterEqual TGreater
 
         | '/' -> (match cs with
             | '/' :: rem -> (None, skip_after rem '\n')
