@@ -1,4 +1,10 @@
-(){},.;+-*/ hello "hello"
+(){},.;+-*/ "hello"
 // this comment should be ignored
+1233182  "hi" 1232
 ! != = == > >= < <=
     // tabbed
+"this
+should
+be
+fine"
+" // this should error

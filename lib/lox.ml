@@ -20,7 +20,7 @@ type token_type =
 
     TPrint |
 
-    TEOF
+    TWspace | TComment | TEOF
     [@@deriving show]
 
 type literal =
@@ -42,46 +42,52 @@ type token = {
     tliteral : literal option;
 }
 
-let make_token ?tliteral ttype = Some {ttype = ttype; tliteral = tliteral}
+let make_token ttype = Ok {ttype = ttype; tliteral = None}
 
 let token_to_str t = show_token_type t.ttype ^ " " ^ literal_to_str t.tliteral
 
 
-let report_error line msg = Printf.eprintf "[line %d] Error: %s" line, msg
+let get_error line msg =
+    let error_msg = Printf.sprintf "[line %d] Error: %s\n" line msg in
+    Error error_msg
 
 let match_next chars x t1 t2 = match chars with
     | [] -> (make_token t1, chars)
     | c :: cs -> if c == x then (make_token t1, cs) else (make_token t2, chars)
 
-let rec skip_after chars x = match chars with
-    | [] -> []
-    | c :: cs -> if c == x then cs else skip_after cs x
+let inc_line c (line : int ref) = if c == '\n' then incr line
 
-let rec match_string chars buf = match chars with
-    | [] -> (None, [])
-    | '"' :: cs -> (
-        Some {ttype = TString; tliteral = Some (LString (List.rev buf))},
-        cs)
-    | c :: cs -> match_string cs (c :: buf)
+let rec skip_after chars x (line : int ref) = match chars with
+    | [] -> get_error !line "Did not find char to skip after."
+    | c :: cs ->
+        inc_line c line;
+        if c == x then Ok cs else skip_after cs x line
+
+let rec match_string chars buf (line : int ref) = match chars with
+    | [] -> (get_error !line "String did not terminate", chars)
+    | '"' :: cs ->
+        let tok = {ttype = TString; tliteral = Some (LString (List.rev buf))} in
+        (Ok tok, cs)
+    | c :: cs ->
+        inc_line c line;
+        match_string cs (c :: buf) line
 
 let is_digit c = c >= '0' && c <= '9'
 
 let int_chars_to_token str =
-    let lit = LNum (float_of_string @@ chars_to_str @@ List.rev str)
+    let lit = LNum (float_of_string @@ chars_to_str @@ str)
     in {ttype = TNum; tliteral = Some lit}
 
-let rec match_num chars dot buf =
-    let return () = if (List.is_empty buf) then (None, chars)
-        else (Some (int_chars_to_token buf), chars) in
+let rec match_num chars dot buf line =
+    let return () = (Ok (int_chars_to_token (List.rev buf)), chars) in
     match chars with
         | [] -> return ()
         | c :: cs -> (match c with
-            | n when is_digit n -> match_num cs dot (n :: buf)
-            | '.' when not dot -> match_num cs true ('.' :: buf)
+            | n when is_digit n -> match_num cs dot (n :: buf) line
+            | '.' when not dot -> match_num cs true ('.' :: buf) line
             | _ -> return ())
 
-(* TODO: make line a ref? *)
-let rec scan_one chars = match chars with
+let rec scan_one chars (line : int ref) = match chars with
     | [] -> (make_token TEOF, [])
     | c :: cs -> match c with
         | '(' -> (make_token TLeftParen, cs)
@@ -103,23 +109,30 @@ let rec scan_one chars = match chars with
         | '>' -> match_next cs '=' TGreaterEqual TGreater
 
         | '/' -> (match cs with
-            | '/' :: rem -> (None, skip_after rem '\n')
+            | '/' :: rem -> (match skip_after rem '\n' line with
+                | Ok rem1 -> (make_token TComment, rem1)
+                | Error e -> (Error e, [])
+                )
             | _ -> (make_token TSlash, cs))
 
-        | ' ' -> (None, cs)
-        | '\r' -> (None, cs)
-        | '\t' -> (None, cs)
-        | '\n' -> (None, cs)
+        | ' ' -> (make_token TWspace, cs)
+        | '\r' -> (make_token TWspace, cs)
+        | '\t' -> (make_token TWspace, cs)
+        | '\n' ->
+            inc_line '\n' line;
+            (make_token TWspace, cs)
 
-        (* String and num matching needs error handling. *)
-        | '"' -> match_string cs []
-        | n when is_digit n -> match_num chars false []
+        | '"' -> match_string cs [] line
+        | n when is_digit n -> match_num chars false [] line
 
-        (* TODO: placeholder for error stuff. *)
-        | _ -> (None, cs)
+        | _ ->
+            let error_msg = Printf.sprintf "Failed to match char: '%c'." c in
+            (get_error !line error_msg, cs)
 
-let rec scan chars tokens = match scan_one chars with
-    | (Some tok, rem) -> (match tok with
-        | {ttype = TEOF; tliteral = _} -> List.rev @@ tok :: tokens
-        | _ -> scan rem (tok :: tokens))
-    | (None, rem) -> scan rem tokens
+let rec scan chars tokens errors (line : int ref) = match scan_one chars line with
+    | (Ok tok, rem) -> (match tok.ttype with
+        | TEOF -> (List.rev @@ tok :: tokens, List.rev errors)
+        | TWspace -> scan rem tokens errors line
+        | TComment -> scan rem tokens errors line
+        | _ -> scan rem (tok :: tokens) errors line)
+    | (Error e, rem) -> scan rem tokens (e :: errors) line
