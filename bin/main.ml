@@ -4,7 +4,7 @@ let run src =
     let (tokens, errors) = Olox.Lox.scan chars [] [] line in
     let errored = not (List.is_empty errors) in
     List.iter (fun msg -> print_string msg) errors;
-    List.iter (fun tok -> Printf.printf "%s " @@ Olox.Lox.token_to_str tok) tokens;
+    List.iter (fun tok -> Printf.printf "%s, " @@ Olox.Lox.token_to_str tok) tokens;
     print_char '\n';
     if errored then 1 else 0
 

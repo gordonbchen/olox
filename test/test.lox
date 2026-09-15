@@ -1,10 +1,9 @@
-(){},.;+-*/ "hello"
-// this comment should be ignored
-1233182  "hi" 1232
-! != = == > >= < <=
-    // tabbed
-"this
-should
-be
-fine"
+(){},.;+-*/ ! != = == > >= < <=
+    // comment
+1233182
+"hello
+world"
+_id _id_  id id_
+or false true nil var if else for while fun return class super this print
+and land andy
 " // this should error

@@ -30,12 +30,10 @@ type literal =
 
 let chars_to_str cs = String.of_seq @@ List.to_seq cs
 
-let literal_to_str l = match l with
-    | None -> ""
-    | Some lit -> (match lit with
-        | LBool x -> string_of_bool x
-        | LNum x -> string_of_float x
-        | LString x -> chars_to_str x)
+let literal_to_str lit = match lit with
+    | LBool x -> string_of_bool x
+    | LNum x -> string_of_float x
+    | LString x -> "\"" ^ String.escaped (chars_to_str x) ^ "\""
 
 type token = {
     ttype : token_type;
@@ -44,7 +42,11 @@ type token = {
 
 let make_token ttype = Ok {ttype = ttype; tliteral = None}
 
-let token_to_str t = show_token_type t.ttype ^ " " ^ literal_to_str t.tliteral
+let token_to_str t =
+    let str = show_token_type t.ttype in
+    str ^ match t.tliteral with
+        | None -> ""
+        | Some lit -> " " ^ literal_to_str lit
 
 
 let get_error line msg =
@@ -87,6 +89,38 @@ let rec match_num chars dot buf line =
             | '.' when not dot -> match_num cs true ('.' :: buf) line
             | _ -> return ())
 
+let is_alphanum c = is_digit c || (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z')
+
+let keyword_table =
+    let symbols = [
+        ("and", TAnd); ("or", TOr);
+        ("false", TFalse); ("true", TTrue);
+
+        ("nil", TNil); ("var", TVar);
+
+        ("if", TIf); ("else", TElse);
+        ("for", TFor); ("while", TWhile);
+
+        ("fun", TFun); ("return", TReturn);
+        ("class", TClass); ("super", TSuper); ("this", TThis);
+
+        ("print", TPrint)
+    ] in
+    Hashtbl.of_seq (List.to_seq symbols)
+
+let classify_id str = match Hashtbl.find_opt keyword_table (chars_to_str str) with
+    | Some keyword_type -> {ttype = keyword_type; tliteral = None}
+    | None -> {ttype = TId; tliteral = Some (LString str)}
+
+let rec match_id chars buf =
+    let token () = classify_id (List.rev buf) in
+    let return () = (Ok (token ()), chars) in
+    match chars with
+        | [] -> return ()
+        | c :: cs -> if c == '_' || is_alphanum c
+            then match_id cs (c :: buf)
+            else return ()
+
 let rec scan_one chars (line : int ref) = match chars with
     | [] -> (make_token TEOF, [])
     | c :: cs -> match c with
@@ -124,6 +158,8 @@ let rec scan_one chars (line : int ref) = match chars with
 
         | '"' -> match_string cs [] line
         | n when is_digit n -> match_num chars false [] line
+
+        | c when c == '_' || is_alphanum c -> match_id chars []
 
         | _ ->
             let error_msg = Printf.sprintf "Failed to match char: '%c'." c in
