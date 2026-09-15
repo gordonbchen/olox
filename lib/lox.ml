@@ -26,14 +26,16 @@ type token_type =
 type literal =
     | LBool of bool
     | LNum of float
-    | LString of string
+    | LString of char list
+
+let chars_to_str cs = String.of_seq @@ List.to_seq cs
 
 let literal_to_str l = match l with
     | None -> ""
-    | Some i -> match i with
+    | Some lit -> (match lit with
         | LBool x -> string_of_bool x
         | LNum x -> string_of_float x
-        | LString x -> x
+        | LString x -> chars_to_str x)
 
 type token = {
     ttype : token_type;
@@ -47,20 +49,39 @@ let token_to_str t = show_token_type t.ttype ^ " " ^ literal_to_str t.tliteral
 
 let report_error line msg = Printf.eprintf "[line %d] Error: %s" line, msg
 
-let match_next src match_c t1 t2 = match src with
-    | [] -> (make_token t1, src)
-    | c :: cs -> if c == match_c then (make_token t1, src) else (make_token t2, cs)
+let match_next chars x t1 t2 = match chars with
+    | [] -> (make_token t1, chars)
+    | c :: cs -> if c == x then (make_token t1, cs) else (make_token t2, chars)
 
-let rec forward_until xs x = match xs with
+let rec skip_after chars x = match chars with
     | [] -> []
-    | c :: cs -> if c == x then cs else forward_until cs x
+    | c :: cs -> if c == x then cs else skip_after cs x
 
-let match_string xs line = match xs with
-    | [] -> report_error line
-    (* TODO: here *)
+let rec match_string chars buf = match chars with
+    | [] -> (None, [])
+    | '"' :: cs -> (
+        Some {ttype = TString; tliteral = Some (LString (List.rev buf))},
+        cs)
+    | c :: cs -> match_string cs (c :: buf)
+
+let is_digit c = c >= '0' && c <= '9'
+
+let int_chars_to_token str =
+    let lit = LNum (float_of_string @@ chars_to_str @@ List.rev str)
+    in {ttype = TNum; tliteral = Some lit}
+
+let rec match_num chars dot buf =
+    let return () = if (List.is_empty buf) then (None, chars)
+        else (Some (int_chars_to_token buf), chars) in
+    match chars with
+        | [] -> return ()
+        | c :: cs -> (match c with
+            | n when is_digit n -> match_num cs dot (n :: buf)
+            | '.' when not dot -> match_num cs true ('.' :: buf)
+            | _ -> return ())
 
 (* TODO: make line a ref? *)
-let rec scan_one src = match src with
+let rec scan_one chars = match chars with
     | [] -> (make_token TEOF, [])
     | c :: cs -> match c with
         | '(' -> (make_token TLeftParen, cs)
@@ -82,7 +103,7 @@ let rec scan_one src = match src with
         | '>' -> match_next cs '=' TGreater TGreaterEqual
 
         | '/' -> (match cs with
-            | '/' :: rem -> scan_one (forward_until rem '\n')
+            | '/' :: rem -> (None, skip_after rem '\n')
             | _ -> (make_token TSlash, cs))
 
         | ' ' -> (None, cs)
@@ -90,7 +111,15 @@ let rec scan_one src = match src with
         | '\t' -> (None, cs)
         | '\n' -> (None, cs)
 
-        | '"' -> match_string cs
+        (* String and num matching needs error handling. *)
+        | '"' -> match_string cs []
+        | n when is_digit n -> match_num chars false []
 
         (* TODO: placeholder for error stuff. *)
-        | _ -> (make_token TEOF, [])
+        | _ -> (None, cs)
+
+let rec scan chars tokens = match scan_one chars with
+    | (Some tok, rem) -> (match tok with
+        | {ttype = TEOF; tliteral = _} -> List.rev @@ tok :: tokens
+        | _ -> scan rem (tok :: tokens))
+    | (None, rem) -> scan rem tokens

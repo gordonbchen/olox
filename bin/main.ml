@@ -1,4 +1,8 @@
-let run src = print_endline src; 0
+let run src =
+    let chars = List.init (String.length src) (String.get src) in
+    let tokens = Olox.Lox.scan chars [] in
+    List.iter (fun tok -> Printf.printf "%s " @@ Olox.Lox.token_to_str tok) tokens;
+    0
 
 let rec run_repl () =
     try

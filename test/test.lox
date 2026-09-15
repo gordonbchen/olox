@@ -1,0 +1,4 @@
+(){},.;+-*/ hello "hello"
+// this comment should be ignored
+! != = == > >= < <=
+    // tabbed
