@@ -1,4 +1,4 @@
-type token_type =
+type token =
     TLeftParen | TRightParen | TLeftBrace | TRightBrace |
     TComma | TDot | TSemiColon |
 
@@ -7,7 +7,8 @@ type token_type =
     TBangEqual | TEqual | TEqualEqual |
     TGreater | TGreaterEqual | TLess | TLessEqual |
 
-    TId | TString | TNum |
+    TId of string |
+    TString of string | TNum of float |
 
     TBang | TAnd | TOr | TFalse | TTrue |
 
@@ -23,62 +24,41 @@ type token_type =
     TWspace | TComment | TEOF
     [@@deriving show]
 
-type literal =
-    | LBool of bool
-    | LNum of float
-    | LString of char list
 
-let chars_to_str cs = String.of_seq @@ List.to_seq cs
-
-let literal_to_str lit = match lit with
-    | LBool x -> string_of_bool x
-    | LNum x -> string_of_float x
-    | LString x -> "\"" ^ String.escaped (chars_to_str x) ^ "\""
-
-type token = {
-    ttype : token_type;
-    tliteral : literal option;
-}
-
-let make_token ttype = Ok {ttype = ttype; tliteral = None}
-
-let token_to_str t =
-    let str = show_token_type t.ttype in
-    str ^ match t.tliteral with
-        | None -> ""
-        | Some lit -> " " ^ literal_to_str lit
+let match_next chars x t1 t2 = match chars with
+    | [] -> (Ok t1, chars)
+    | c :: cs -> if c == x then (Ok t1, cs) else (Ok t2, chars)
 
 
 let get_error line msg =
     let error_msg = Printf.sprintf "[line %d] Error: %s\n" line msg in
     Error error_msg
 
-let match_next chars x t1 t2 = match chars with
-    | [] -> (make_token t1, chars)
-    | c :: cs -> if c == x then (make_token t1, cs) else (make_token t2, chars)
-
 let inc_line c (line : int ref) = if c == '\n' then incr line
 
 let rec skip_after chars x (line : int ref) = match chars with
-    | [] -> get_error !line "Did not find char to skip after."
+    | [] -> []
     | c :: cs ->
         inc_line c line;
-        if c == x then Ok cs else skip_after cs x line
+        if c == x then cs else skip_after cs x line
+
+
+let list_to_str l = String.of_seq @@ List.to_seq l
 
 let rec match_string chars buf (line : int ref) = match chars with
     | [] -> (get_error !line "String did not terminate", chars)
     | '"' :: cs ->
-        let tok = {ttype = TString; tliteral = Some (LString (List.rev buf))} in
-        (Ok tok, cs)
+        let tok = TString (list_to_str @@ List.rev buf) in (Ok tok, cs)
     | c :: cs ->
         inc_line c line;
         match_string cs (c :: buf) line
 
+
 let is_digit c = c >= '0' && c <= '9'
 
-let int_chars_to_token str =
-    let lit = LNum (float_of_string @@ chars_to_str @@ str)
-    in {ttype = TNum; tliteral = Some lit}
+let chars_to_str cs = String.of_seq @@ List.to_seq cs
+
+let int_chars_to_token str = TNum (float_of_string @@ chars_to_str @@ str)
 
 let rec match_num chars dot buf line =
     let return () = (Ok (int_chars_to_token (List.rev buf)), chars) in
@@ -88,6 +68,7 @@ let rec match_num chars dot buf line =
             | n when is_digit n -> match_num cs dot (n :: buf) line
             | '.' when not dot -> match_num cs true ('.' :: buf) line
             | _ -> return ())
+
 
 let is_alphanum c = is_digit c || (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z')
 
@@ -108,9 +89,11 @@ let keyword_table =
     ] in
     Hashtbl.of_seq (List.to_seq symbols)
 
-let classify_id str = match Hashtbl.find_opt keyword_table (chars_to_str str) with
-    | Some keyword_type -> {ttype = keyword_type; tliteral = None}
-    | None -> {ttype = TId; tliteral = Some (LString str)}
+let classify_id chars =
+    let str = chars_to_str chars in
+    match Hashtbl.find_opt keyword_table str with
+      | Some keyword_type -> keyword_type
+      | None -> TId str
 
 let rec match_id chars buf =
     let token () = classify_id (List.rev buf) in
@@ -121,40 +104,38 @@ let rec match_id chars buf =
             then match_id cs (c :: buf)
             else return ()
 
+
 let rec scan_one chars (line : int ref) = match chars with
-    | [] -> (make_token TEOF, [])
+    | [] -> (Ok TEOF, [])
     | c :: cs -> match c with
-        | '(' -> (make_token TLeftParen, cs)
-        | ')' -> (make_token TRightParen, cs)
-        | '{' -> (make_token TLeftBrace, cs)
-        | '}' -> (make_token TRightBrace, cs)
+        | '(' -> (Ok TLeftParen, cs)
+        | ')' -> (Ok TRightParen, cs)
+        | '{' -> (Ok TLeftBrace, cs)
+        | '}' -> (Ok TRightBrace, cs)
 
-        | ',' -> (make_token TComma, cs)
-        | '.' -> (make_token TDot, cs)
-        | ';' -> (make_token TSemiColon, cs)
+        | ',' -> (Ok TComma, cs)
+        | '.' -> (Ok TDot, cs)
+        | ';' -> (Ok TSemiColon, cs)
 
-        | '+' -> (make_token TPlus, cs)
-        | '-' -> (make_token TMinus, cs)
-        | '*' -> (make_token TStar, cs)
+        | '+' -> (Ok TPlus, cs)
+        | '-' -> (Ok TMinus, cs)
+        | '*' -> (Ok TStar, cs)
 
         | '!' -> match_next cs '=' TBangEqual TBang
         | '=' -> match_next cs '=' TEqualEqual TEqual
         | '<' -> match_next cs '=' TLessEqual TLess
         | '>' -> match_next cs '=' TGreaterEqual TGreater
 
-        | '/' -> (match cs with
-            | '/' :: rem -> (match skip_after rem '\n' line with
-                | Ok rem1 -> (make_token TComment, rem1)
-                | Error e -> (Error e, [])
-                )
-            | _ -> (make_token TSlash, cs))
+        | '/' -> (
+          match cs with
+            | '/' :: rem -> let rem1 = skip_after rem '\n' line in (Ok TComment, rem1)
+            | _ -> (Ok TSlash, cs)
+        )
 
-        | ' ' -> (make_token TWspace, cs)
-        | '\r' -> (make_token TWspace, cs)
-        | '\t' -> (make_token TWspace, cs)
+        | ' ' | '\r' | '\t' -> (Ok TWspace, cs)
         | '\n' ->
             inc_line '\n' line;
-            (make_token TWspace, cs)
+            (Ok TWspace, cs)
 
         | '"' -> match_string cs [] line
         | n when is_digit n -> match_num chars false [] line
@@ -166,7 +147,7 @@ let rec scan_one chars (line : int ref) = match chars with
             (get_error !line error_msg, cs)
 
 let rec scan chars tokens errors (line : int ref) = match scan_one chars line with
-    | (Ok tok, rem) -> (match tok.ttype with
+    | (Ok tok, rem) -> (match tok with
         | TEOF -> (List.rev @@ tok :: tokens, List.rev errors)
         | TWspace -> scan rem tokens errors line
         | TComment -> scan rem tokens errors line

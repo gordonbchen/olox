@@ -2,11 +2,17 @@ let run src =
     let chars = List.init (String.length src) (String.get src) in
     let line = ref 1 in
     let (tokens, errors) = Olox.Lox.scan chars [] [] line in
-    let errored = not (List.is_empty errors) in
+    let errored = ref (not (List.is_empty errors)) in
     List.iter (fun msg -> print_string msg) errors;
-    List.iter (fun tok -> Printf.printf "%s, " @@ Olox.Lox.token_to_str tok) tokens;
+    List.iter (fun tok -> Printf.printf "%s, " @@ Olox.Lox.show_token tok) tokens;
     print_char '\n';
-    if errored then 1 else 0
+
+    (match Olox.Parse.parse tokens with
+        | (Error e, _) -> print_string e; errored := true
+        | (Ok ast, _) -> print_string @@ Olox.Parse.expr_to_str ast);
+    print_char '\n';
+
+    if !errored then 1 else 0
 
 let rec run_repl () =
     try
