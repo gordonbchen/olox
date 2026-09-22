@@ -33,9 +33,9 @@ let (let*) (result, tokens) f = match result with
 let rec parse_star ops parse_func left tokens = match tokens with
   | [] -> (Ok left, [])
   | op :: toks when List.mem op ops ->
-      let* (inner_left, toks1) = parse_func toks in
-      let* (right, rem) = parse_star ops parse_func inner_left toks1 in
-      (Ok (Binary {left; op; right}), rem)
+      let* (right, toks1) = parse_func toks in
+      let left_expr = Binary {left; op; right} in
+      parse_star ops parse_func left_expr toks1
   | _ -> (Ok left, tokens)
 
 let uncurry f (x, y) = f x y
