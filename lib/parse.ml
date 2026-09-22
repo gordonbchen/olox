@@ -30,9 +30,9 @@ type expr =
 
 let rec expr_to_str expr = match expr with
   | Literal l -> literal_to_str l
-  | Unary {op; right} -> show_unary_op op ^ " " ^ expr_to_str right
-  | Binary {left; op; right} -> expr_to_str left ^ " " ^ show_binary_op op
-                                                 ^ " " ^ expr_to_str right
+  | Unary {op; right} -> "(" ^ show_unary_op op ^ " " ^ expr_to_str right ^ ")"
+  | Binary {left; op; right} -> "(" ^ expr_to_str left ^ " " ^ show_binary_op op
+                                                       ^ " " ^ expr_to_str right ^ ")"
   | Grouping expr -> "(" ^ expr_to_str expr ^ ")"
 
 
@@ -79,7 +79,7 @@ let token_to_literal t = match t with
   | _ -> None
 
 
-let rec parse tokens = parse_equality tokens
+let rec parse_expr tokens = parse_equality tokens
 
 and parse_equality tokens = parse_binary parse_comparison
   [(Lex.TBangEqual, NotEqual); (Lex.TEqualEqual, EqualEqual)] tokens 
@@ -103,7 +103,7 @@ and parse_unary tokens = match tokens with
 
 and parse_primary tokens = match tokens with
   | Lex.TLeftParen :: toks ->
-    let* (expr, toks) = parse toks in (
+    let* (expr, toks) = parse_expr toks in (
       match toks with
         | Lex.TRightParen :: rem -> (Ok (Grouping expr), rem)
         | _ -> (Error "Expected ')' after expression.", toks)
@@ -114,3 +114,9 @@ and parse_primary tokens = match tokens with
       | _ -> (Error ("Expected to read a primary but found a " ^ Lex.show_token t), tokens)
   )
   | [] -> (Error "Expected to read a primary", [])
+
+
+let parse tokens = match parse_expr tokens with
+    | (Error e, _) -> Error e
+    | (Ok ast, []) -> Ok ast
+    | (_, t :: ts) -> Error ("Parser did not read all tokens. Next token: " ^ Lex.show_token t)

@@ -1,18 +1,30 @@
-let run src =
+let (let*) result f = match result with
+  | Ok x -> f x
+  | Error e -> Error e
+
+let run_inner src =
     let chars = List.init (String.length src) (String.get src) in
     let line = ref 1 in
-    let (tokens, errors) = Olox.Lex.scan chars [] [] line in
-    let errored = ref (not (List.is_empty errors)) in
-    List.iter (fun msg -> print_string msg) errors;
+
+    let* tokens = Olox.Lex.scan chars [] [] line in
     List.iter (fun tok -> Printf.printf "%s, " @@ Olox.Lex.show_token tok) tokens;
     print_char '\n';
 
-    (match Olox.Parse.parse tokens with
-        | (Error e, _) -> print_string e; errored := true
-        | (Ok ast, _) -> print_string @@ Olox.Parse.expr_to_str ast);
+    let* ast = Olox.Parse.parse tokens in
+    print_string @@ Olox.Parse.expr_to_str ast;
     print_char '\n';
 
-    if !errored then 1 else 0
+    let* value = Olox.Eval.eval ast in
+    print_string @@ Olox.Eval.val_to_str value;
+    print_char '\n';
+    Ok value
+
+let run src = match run_inner src with
+  | Error e ->
+    print_string e;
+    print_char '\n';
+    1
+  | Ok _ -> 0
 
 let rec run_repl () =
     try
