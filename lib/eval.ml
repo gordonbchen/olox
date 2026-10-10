@@ -10,29 +10,29 @@ let val_to_str l = match l with
   | String s -> s
   | Nil -> "nil"
 
+type environment = {vars: (string, value) Hashtbl.t; parent: environment option}
+let rec get_var_val env var_name = match Hashtbl.find_opt env.vars var_name with
+  | Some value -> Ok value
+  | None -> (match env.parent with
+    | Some parent_env -> get_var_val parent_env var_name
+    | None -> Error ("Variable \"" ^ var_name ^ "\" undefined."))
+
 let (let*) result f = match result with
   | Ok x -> f x
   | Error e -> Error e
 
 
-let environment : (string, value) Hashtbl.t = Hashtbl.create 128  (* var name : value pairs. *)
-
-
-let rec eval_expr expr = match expr with
+let rec eval_expr expr env = match expr with
   | Parse.Literal l -> Ok (eval_literal l)
-  | Parse.Var var_name -> (match Hashtbl.find_opt environment var_name with
-    | Some value -> Ok value
-    | None -> Error ("Variable \"" ^ var_name ^ "\" does not exist, cannot be accessed."))
-  | Parse.Unary {op; right} -> eval_unary op right
-  | Parse.Binary {left; op; right} -> eval_binary left op right
-  | Parse.Grouping g -> eval_expr g
+  | Parse.Var var_name -> get_var_val env var_name
+  | Parse.Unary {op; right} -> eval_unary op right env
+  | Parse.Binary {left; op; right} -> eval_binary left op right env
+  | Parse.Grouping g -> eval_expr g env
   | Parse.Assignment (var_name, expr) ->
-    if Hashtbl.mem environment var_name
-    then
-      let* value = eval_expr expr in
-      Hashtbl.replace environment var_name value;
-      Ok value
-    else Error ("Undefined variable \"" ^ var_name ^ "\".")
+    let* _ = get_var_val env var_name in
+    let* value = eval_expr expr env in
+    Hashtbl.replace env.vars var_name value;
+    Ok value
 
 and eval_literal l = match l with
   | Parse.Bool b -> Bool b
@@ -40,8 +40,8 @@ and eval_literal l = match l with
   | Parse.String s-> String s
   | Parse.Nil -> Nil
 
-and eval_unary op right =
-  let* rval = eval_expr right in
+and eval_unary op right env =
+  let* rval = eval_expr right env in
   match (op, rval) with
     | (Parse.Negative, Num x) -> Ok (Num (-.x))
     | (Parse.Not, Bool b) -> Ok (Bool (not b))
@@ -50,9 +50,9 @@ and eval_unary op right =
     | _ -> Error (Printf.sprintf "Unexpected unary op types: %s %s."
                    (Parse.show_unary_op op) (val_to_str rval))
 
-and eval_binary left op right =
-  let* lval = eval_expr left in
-  let* rval = eval_expr right in
+and eval_binary left op right env =
+  let* lval = eval_expr left env in
+  let* rval = eval_expr right env in
   match (lval, op, rval) with
     | (Num x, Parse.Plus, Num y) -> Ok (Num (x +. y))
     | (Num x, Parse.Minus, Num y) -> Ok (Num (x -. y))
@@ -69,28 +69,44 @@ and eval_binary left op right =
                    (val_to_str lval) (Parse.show_binary_op op) (val_to_str rval))
 
 
-let eval_statement statement = match statement with
+let eval_statement statement env = match statement with
   | Parse.PrintStmt expr ->
-    let* v = eval_expr expr in
+    let* v = eval_expr expr env in
     print_string (val_to_str v ^ "\n");
     Ok Nil
   | Parse.ExprStmt expr ->
-    let* v = eval_expr expr in
+    let* v = eval_expr expr env in
     Ok Nil
 
-let eval_opt_expr opt_expr = match opt_expr with
+let eval_opt_expr opt_expr env = match opt_expr with
   | None -> Ok Nil
-  | Some expr -> eval_expr expr
+  | Some expr -> eval_expr expr env
 
-let eval_declaration decl = match decl with
-  | Parse.Stmt statement -> eval_statement statement
+let eval_declaration decl env = match decl with
+  | Parse.Stmt statement -> eval_statement statement env
   | Parse.VarDecl (var_name, init_expr) ->
-    let* v = eval_opt_expr init_expr in
-    Hashtbl.replace environment var_name v;
+    let* v = eval_opt_expr init_expr env in
+    Hashtbl.replace env.vars var_name v;
     Ok Nil
 
-let rec eval (Parse.Program decls) = match decls with
+let rec eval_decls decls env = match decls with
   | decl :: decls ->
-    let* v = eval_declaration decl in
-    eval (Parse.Program decls)
+    let* _ = eval_declaration decl env in
+    eval_decls decls env
   | [] -> Ok Nil
+
+let eval_block block env = match block with
+  | Parse.Decl decl -> eval_declaration decl env
+  | Parse.Block decls ->
+    let block_env = {vars = (Hashtbl.create 16); parent = Some env} in
+    eval_decls decls block_env
+
+let rec eval_program (Parse.Program blocks) env = match blocks with
+  | block :: blocks ->
+    let* _ = eval_block block env in
+    eval_program (Parse.Program blocks) env
+  | [] -> Ok Nil
+
+let eval program =
+  let env = {vars = (Hashtbl.create 128); parent = None} in
+  eval_program program env
