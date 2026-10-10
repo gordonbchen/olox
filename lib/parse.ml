@@ -24,20 +24,49 @@ type binary_op =
 
 type expr =
   | Literal of literal
+  | Var of string
   | Unary of {op: unary_op; right: expr}
   | Binary of {left: expr; op: binary_op; right: expr}
   | Grouping of expr
+  | Assignment of string * expr
 
 let rec expr_to_str expr = match expr with
   | Literal l -> literal_to_str l
+  | Var var_name -> var_name
   | Unary {op; right} -> "(" ^ show_unary_op op ^ " " ^ expr_to_str right ^ ")"
   | Binary {left; op; right} -> "(" ^ expr_to_str left ^ " " ^ show_binary_op op
                                                        ^ " " ^ expr_to_str right ^ ")"
   | Grouping expr -> "(" ^ expr_to_str expr ^ ")"
+  | Assignment (var_name, expr) -> var_name ^ " = " ^ expr_to_str expr
 
+
+type statement = ExprStmt of expr | PrintStmt of expr
+
+let statement_to_str statement = match statement with
+  | ExprStmt expr -> "ExprStmt " ^ expr_to_str expr
+  | PrintStmt expr -> "PrintStmt " ^ expr_to_str expr
+
+type declaration = Stmt of statement | VarDecl of string * (expr option)
+
+let declaration_to_str declaration = match declaration with
+  | Stmt s -> statement_to_str s
+  | VarDecl (var_name, Some expr) -> var_name ^ " = " ^ expr_to_str expr ^ ";"
+  | VarDecl (var_name, None) -> var_name ^ ";"
+
+type program = Program of declaration list
+
+let rec program_to_str (Program decls) = match decls with
+  | d :: decls -> declaration_to_str d ^ "\n" ^ program_to_str (Program decls)
+  | [] -> ""
 
 (*
-expression     → equality ;
+program -> declaration* EOF;
+declaration -> var_decl | statement;
+var_decl -> "var" identifier ("=" expression)? ";";
+statement -> expression ";" | print expression ";";
+
+expression     → assignment;
+assignment     -> identifier "=" expression ";" | equality ;
 equality       → comparison ( ( "!=" | "==" ) comparison )* ;
 comparison     → term ( ( ">" | ">=" | "<" | "<=" ) term )* ;
 term           → factor ( ( "-" | "+" ) factor )* ;
@@ -45,7 +74,8 @@ factor         → unary ( ( "/" | "*" ) unary )* ;
 unary          → ( "!" | "-" ) unary
                | primary ;
 primary        → NUMBER | STRING | "true" | "false" | "nil"
-               | "(" expression ")" ;
+                | "(" expression ")"
+                | identifier;
 *)
 
 let (let*) (result, tokens) f = match result with
@@ -78,8 +108,22 @@ let token_to_literal t = match t with
   | Lex.TNil -> Some Nil
   | _ -> None
 
+let read_expect tokens expected error = match tokens with
+  | tok :: rem when tok = expected -> (Ok tok, rem)
+  | _ -> (Error error, tokens)
 
-let rec parse_expr tokens = parse_equality tokens
+
+let rec parse_expr tokens = parse_assignment tokens
+
+and parse_assignment tokens =
+  let* (expr, toks) = parse_equality tokens in
+  match toks with
+    | Lex.TEqual :: toks -> (match expr with
+      | Var var_name ->
+        let* (rvalue, toks) = parse_expr toks in
+        (Ok (Assignment (var_name, rvalue)), toks)
+      | _ -> (Error "Assignment lvalue must be a variable identifier.", toks))
+    | toks -> (Ok expr, toks)
 
 and parse_equality tokens = parse_binary parse_comparison
   [(Lex.TBangEqual, NotEqual); (Lex.TEqualEqual, EqualEqual)] tokens 
@@ -103,11 +147,10 @@ and parse_unary tokens = match tokens with
 
 and parse_primary tokens = match tokens with
   | Lex.TLeftParen :: toks ->
-    let* (expr, toks) = parse_expr toks in (
-      match toks with
-        | Lex.TRightParen :: rem -> (Ok (Grouping expr), rem)
-        | _ -> (Error "Expected ')' after expression.", toks)
-    )
+    let* (expr, toks) = parse_expr toks in
+    let* (_, toks) = read_expect toks Lex.TRightParen "Expected ')' after expression." in
+    (Ok (Grouping expr), toks)
+  | Lex.TId var_name :: toks -> (Ok (Var var_name), toks)
   | t :: rem -> (
     match token_to_literal t with
       | Some l -> (Ok (Literal l), rem)
@@ -116,7 +159,43 @@ and parse_primary tokens = match tokens with
   | [] -> (Error "Expected to read a primary", [])
 
 
-let parse tokens = match parse_expr tokens with
+let parse_statement tokens = match tokens with
+  | Lex.TPrint :: toks ->
+    let* (expr, toks) = parse_expr toks in
+    let* (_, toks) = read_expect toks Lex.TSemiColon "Expected ';' after print statement." in
+    (Ok (PrintStmt expr), toks)
+  | toks ->
+    let* (expr, toks) = parse_expr toks in
+    let* (_, toks) = read_expect toks Lex.TSemiColon "Expected ';' after statement." in
+    (Ok (ExprStmt expr), toks)
+
+let read_id tokens = match tokens with
+  | Lex.TId var_name :: toks -> (Ok var_name, toks)
+  | toks -> (Error "Expected var id.", toks)
+
+let parse_decl tokens = match tokens with
+  | Lex.TVar :: toks ->
+    let* (var_name, toks) = read_id toks in
+    let* (init_expr, toks) = (match toks with
+      | Lex.TEqual :: toks ->
+        let* (expr, toks) = parse_expr toks in
+        (Ok (Some expr), toks)
+      | toks -> (Ok None, toks)) in
+    let* (_, toks) = read_expect toks Lex.TSemiColon "Expected ';' after var declaration." in
+    (Ok (VarDecl (var_name, init_expr)), toks)
+  | toks ->
+    let* (statment, toks) = parse_statement toks in
+    (Ok (Stmt statment), toks)
+
+let rec parse_program tokens = match tokens with
+  | [Lex.TEOF] -> (Ok (Program []), [])
+  | toks ->
+    let* (declaration, toks) = parse_decl toks in
+    let* (Program declarations, toks) = parse_program toks in
+    (Ok (Program (declaration :: declarations)), toks)
+
+
+let parse tokens = match parse_program tokens with
     | (Error e, _) -> Error e
     | (Ok ast, []) -> Ok ast
     | (_, t :: ts) -> Error ("Parser did not read all tokens. Next token: " ^ Lex.show_token t)

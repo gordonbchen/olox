@@ -11,7 +11,7 @@ let run_inner src =
     print_char '\n';
 
     let* ast = Olox.Parse.parse tokens in
-    print_string @@ Olox.Parse.expr_to_str ast;
+    print_string @@ Olox.Parse.program_to_str ast;
     print_char '\n';
 
     let* value = Olox.Eval.eval ast in

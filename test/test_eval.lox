@@ -1,1 +1,10 @@
-5 + 3 * 2 - 4 / 2
+var x;
+print x;
+var x = 1 + 2;
+print x;
+var x = x + 3*4;
+print x;
+print x = 14;
+print x;
+x = 69;
+print x;

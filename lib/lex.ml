@@ -149,7 +149,7 @@ let rec scan_one chars (line : int ref) = match chars with
 let rec scan chars tokens errors (line : int ref) = match scan_one chars line with
     | (Ok tok, rem) -> (match tok with
         | TEOF -> if List.is_empty errors
-          then Ok (List.rev @@ tokens)
+          then Ok (List.rev (TEOF :: tokens))
           (*TODO: foldl vs foldr.*)
           else Error (List.fold_left (fun msg e -> e ^ "\n" ^ msg) "" errors)
         | TWspace -> scan rem tokens errors line
