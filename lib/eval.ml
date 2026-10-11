@@ -89,24 +89,18 @@ let eval_declaration decl env = match decl with
     Hashtbl.replace env.vars var_name v;
     Ok Nil
 
-let rec eval_decls decls env = match decls with
-  | decl :: decls ->
-    let* _ = eval_declaration decl env in
-    eval_decls decls env
-  | [] -> Ok Nil
-
-let eval_block block env = match block with
+let rec eval_block block env = match block with
   | Parse.Decl decl -> eval_declaration decl env
-  | Parse.Block decls ->
-    let block_env = {vars = (Hashtbl.create 16); parent = Some env} in
-    eval_decls decls block_env
+  | Parse.Block blocks ->
+    let inner_env = {vars = (Hashtbl.create 16); parent = Some env} in
+    eval_blocks blocks inner_env
 
-let rec eval_program (Parse.Program blocks) env = match blocks with
+and eval_blocks blocks env = match blocks with
   | block :: blocks ->
     let* _ = eval_block block env in
-    eval_program (Parse.Program blocks) env
+    eval_blocks blocks env
   | [] -> Ok Nil
 
-let eval program =
+let eval (Parse.Program blocks) =
   let env = {vars = (Hashtbl.create 128); parent = None} in
-  eval_program program env
+  eval_blocks blocks env

@@ -53,25 +53,23 @@ let declaration_to_str declaration = match declaration with
   | VarDecl (var_name, Some expr) -> var_name ^ " = " ^ expr_to_str expr ^ ";"
   | VarDecl (var_name, None) -> var_name ^ ";"
 
-type block = Decl of declaration | Block of declaration list
-
-let rec decls_to_str decls = match decls with
-  | d :: decls -> declaration_to_str d ^ "\n" ^ decls_to_str decls
-  | [] -> ""
+type block = Decl of declaration | Block of block list
 
 let rec block_to_str block = match block with
   | Decl d -> declaration_to_str d
-  | Block decls -> "{\n" ^ decls_to_str decls ^ "}"
+  | Block blocks -> "{\n" ^ blocks_to_str blocks ^ "}"
+
+and blocks_to_str blocks = match blocks with
+  | (b :: blocks) -> block_to_str b ^ "\n" ^ blocks_to_str blocks
+  | [] -> ""
 
 type program = Program of block list
 
-let rec program_to_str (Program blocks) = match blocks with
-  | b :: blocks -> block_to_str b ^ "\n" ^ program_to_str (Program blocks)
-  | [] -> ""
+let rec program_to_str (Program blocks) = blocks_to_str blocks
 
 (*
 program -> block* EOF;
-block -> "{" declaration* "}" | declaration;
+block -> "{" block* "}" | declaration;
 
 declaration -> var_decl | statement;
 var_decl -> "var" identifier ("=" expression)? ";";
@@ -107,7 +105,6 @@ let rec parse_star tokens_ops parse_func left tokens = match tokens with
   )
   | _ -> (Ok left, tokens)
 
-let uncurry f (x, y) = f x y
 let parse_binary parse_func ops tokens =
   let* (left, rem) = parse_func tokens in
   parse_star ops parse_func left rem
@@ -199,21 +196,21 @@ let parse_decl tokens = match tokens with
     let* (statment, toks) = parse_statement toks in
     (Ok (Stmt statment), toks)
 
-let rec parse_decls tokens = match tokens with
-  | Lex.TRightBrace :: toks -> (Ok [], tokens)
-  | toks ->
-    let* (decl, toks) = parse_decl toks in
-    let* (decls, toks) = parse_decls toks in
-    (Ok (decl :: decls), toks)
-
-let parse_block tokens = match tokens with
+let rec parse_block tokens = match tokens with
   | Lex.TLeftBrace :: toks ->
-    let* (decls, toks) = parse_decls toks in
+    let* (blocks, toks) = parse_blocks toks in
     let* (_, toks) = read_expect toks Lex.TRightBrace "Expected '}' to end block." in
-    (Ok (Block decls), toks)
+    (Ok (Block blocks), toks)
   | toks ->
     let* (decl, toks) = parse_decl toks in
     (Ok (Decl decl), toks)
+
+and parse_blocks tokens = match tokens with
+  | Lex.TRightBrace :: toks -> (Ok [], tokens)
+  | toks ->
+    let* (block, toks) = parse_block toks in
+    let* (blocks, toks) = parse_blocks toks in
+    (Ok (block :: blocks), toks)
 
 let rec parse_program tokens = match tokens with
   | [Lex.TEOF] -> (Ok (Program []), [])
