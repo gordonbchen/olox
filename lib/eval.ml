@@ -69,7 +69,11 @@ and eval_binary left op right env =
                    (val_to_str lval) (Parse.show_binary_op op) (val_to_str rval))
 
 
-let eval_statement statement env = match statement with
+let eval_opt_expr opt_expr env = match opt_expr with
+  | None -> Ok Nil
+  | Some expr -> eval_expr expr env
+
+let rec eval_statement statement env = match statement with
   | Parse.PrintStmt expr ->
     let* v = eval_expr expr env in
     print_string (val_to_str v ^ "\n");
@@ -77,30 +81,20 @@ let eval_statement statement env = match statement with
   | Parse.ExprStmt expr ->
     let* v = eval_expr expr env in
     Ok Nil
-
-let eval_opt_expr opt_expr env = match opt_expr with
-  | None -> Ok Nil
-  | Some expr -> eval_expr expr env
-
-let eval_declaration decl env = match decl with
-  | Parse.Stmt statement -> eval_statement statement env
   | Parse.VarDecl (var_name, init_expr) ->
     let* v = eval_opt_expr init_expr env in
     Hashtbl.replace env.vars var_name v;
     Ok Nil
-
-let rec eval_block block env = match block with
-  | Parse.Decl decl -> eval_declaration decl env
-  | Parse.Block blocks ->
+  | Parse.Block statements ->
     let inner_env = {vars = (Hashtbl.create 16); parent = Some env} in
-    eval_blocks blocks inner_env
+    eval_statements statements inner_env
 
-and eval_blocks blocks env = match blocks with
-  | block :: blocks ->
-    let* _ = eval_block block env in
-    eval_blocks blocks env
+and eval_statements statements env = match statements with
+  | stmt :: stmts ->
+    let* _ = eval_statement stmt env in
+    eval_statements stmts env
   | [] -> Ok Nil
 
-let eval (Parse.Program blocks) =
+let eval (Parse.Program statements) =
   let env = {vars = (Hashtbl.create 128); parent = None} in
-  eval_blocks blocks env
+  eval_statements statements env

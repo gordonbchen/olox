@@ -7,7 +7,7 @@ type literal =
 let literal_to_str l = match l with
   | Bool b -> string_of_bool b
   | Num x -> string_of_float x
-  | String s -> s
+  | String s -> "\"" ^ s ^ "\""
   | Nil -> "nil"
 
 type unary_op =
@@ -40,40 +40,36 @@ let rec expr_to_str expr = match expr with
   | Assignment (var_name, expr) -> var_name ^ " = " ^ expr_to_str expr
 
 
-type statement = ExprStmt of expr | PrintStmt of expr
+type statement =
+    ExprStmt of expr
+  | PrintStmt of expr
+  | VarDecl of string * expr option
+  | Block of statement list
 
-let statement_to_str statement = match statement with
-  | ExprStmt expr -> "ExprStmt " ^ expr_to_str expr
-  | PrintStmt expr -> "PrintStmt " ^ expr_to_str expr
+let rec statement_to_str statement = match statement with
+  | ExprStmt expr -> expr_to_str expr ^ ";"
+  | PrintStmt expr -> "print " ^ expr_to_str expr ^ ";"
+  | VarDecl (var_name, Some expr) -> "var " ^ var_name ^ " = " ^ expr_to_str expr ^ ";"
+  | VarDecl (var_name, None) -> "var " ^ var_name ^ ";"
+  | Block statements -> "{\n" ^ statements_to_str statements ^ "}"
 
-type declaration = Stmt of statement | VarDecl of string * (expr option)
-
-let declaration_to_str declaration = match declaration with
-  | Stmt s -> statement_to_str s
-  | VarDecl (var_name, Some expr) -> var_name ^ " = " ^ expr_to_str expr ^ ";"
-  | VarDecl (var_name, None) -> var_name ^ ";"
-
-type block = Decl of declaration | Block of block list
-
-let rec block_to_str block = match block with
-  | Decl d -> declaration_to_str d
-  | Block blocks -> "{\n" ^ blocks_to_str blocks ^ "}"
-
-and blocks_to_str blocks = match blocks with
-  | (b :: blocks) -> block_to_str b ^ "\n" ^ blocks_to_str blocks
+and statements_to_str statements = match statements with
+  | s :: statements -> statement_to_str s ^ "\n" ^ statements_to_str statements
   | [] -> ""
 
-type program = Program of block list
 
-let rec program_to_str (Program blocks) = blocks_to_str blocks
+type program = Program of statement list
+
+let program_to_str (Program statements) = statements_to_str statements
 
 (*
-program -> block* EOF;
-block -> "{" block* "}" | declaration;
+program -> declaration* EOF;
 
 declaration -> var_decl | statement;
 var_decl -> "var" identifier ("=" expression)? ";";
+
 statement -> "print"? expression ";";
+          -> "{" declaration* "}"
 
 expression     → assignment;
 assignment     -> identifier "=" expression ";" | equality ;
@@ -168,21 +164,11 @@ and parse_primary tokens = match tokens with
   | [] -> (Error "Expected to read a primary", [])
 
 
-let parse_statement tokens = match tokens with
-  | Lex.TPrint :: toks ->
-    let* (expr, toks) = parse_expr toks in
-    let* (_, toks) = read_expect toks Lex.TSemiColon "Expected ';' after print statement." in
-    (Ok (PrintStmt expr), toks)
-  | toks ->
-    let* (expr, toks) = parse_expr toks in
-    let* (_, toks) = read_expect toks Lex.TSemiColon "Expected ';' after statement." in
-    (Ok (ExprStmt expr), toks)
-
 let read_id tokens = match tokens with
   | Lex.TId var_name :: toks -> (Ok var_name, toks)
   | toks -> (Error "Expected var id.", toks)
 
-let parse_decl tokens = match tokens with
+let rec parse_decl tokens = match tokens with
   | Lex.TVar :: toks ->
     let* (var_name, toks) = read_id toks in
     let* (init_expr, toks) = (match toks with
@@ -192,33 +178,36 @@ let parse_decl tokens = match tokens with
       | toks -> (Ok None, toks)) in
     let* (_, toks) = read_expect toks Lex.TSemiColon "Expected ';' after var declaration." in
     (Ok (VarDecl (var_name, init_expr)), toks)
-  | toks ->
-    let* (statment, toks) = parse_statement toks in
-    (Ok (Stmt statment), toks)
+  | toks -> parse_statement toks
 
-let rec parse_block tokens = match tokens with
+and parse_statement tokens = match tokens with
   | Lex.TLeftBrace :: toks ->
-    let* (blocks, toks) = parse_blocks toks in
+    let* (decls, toks) = parse_block_decls toks in
     let* (_, toks) = read_expect toks Lex.TRightBrace "Expected '}' to end block." in
-    (Ok (Block blocks), toks)
+    (Ok (Block decls), toks)
+  | Lex.TPrint :: toks ->
+    let* (expr, toks) = parse_expr toks in
+    let* (_, toks) = read_expect toks Lex.TSemiColon "Expected ';' after print statement." in
+    (Ok (PrintStmt expr), toks)
   | toks ->
-    let* (decl, toks) = parse_decl toks in
-    (Ok (Decl decl), toks)
+    let* (expr, toks) = parse_expr toks in
+    let* (_, toks) = read_expect toks Lex.TSemiColon "Expected ';' after statement." in
+    (Ok (ExprStmt expr), toks)
 
-and parse_blocks tokens = match tokens with
+and parse_block_decls tokens = match tokens with
   | Lex.TRightBrace :: toks -> (Ok [], tokens)
   | toks ->
-    let* (block, toks) = parse_block toks in
-    let* (blocks, toks) = parse_blocks toks in
-    (Ok (block :: blocks), toks)
+    let* (decl, toks) = parse_decl toks in
+    let* (decls, toks) = parse_block_decls toks in
+    (Ok (decl :: decls), toks)
+
 
 let rec parse_program tokens = match tokens with
   | [Lex.TEOF] -> (Ok (Program []), [])
   | toks ->
-    let* (block, toks) = parse_block toks in
-    let* (Program blocks, toks) = parse_program toks in
-    (Ok (Program (block :: blocks)), toks)
-
+    let* (stmt, toks) = parse_decl toks in
+    let* (Program stmts, toks) = parse_program toks in
+    (Ok (Program (stmt :: stmts)), toks)
 
 let parse tokens = match parse_program tokens with
     | (Error e, _) -> Error e
